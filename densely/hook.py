@@ -39,6 +39,27 @@ def extract_text(resp):
     return None
 
 
+def replace_text(resp, text):
+    """Copy of tool_response with the field extract_text read swapped for text.
+
+    Claude Code validates updatedToolOutput against the tool's own output
+    schema and silently keeps the original output when it doesn't match.
+    """
+    if isinstance(resp, str):
+        return text
+    resp = dict(resp)
+    for key in ("output", "stdout", "content", "text"):
+        v = resp.get(key)
+        if isinstance(v, str) and v:
+            resp[key] = text
+            return resp
+    f = dict(resp["file"])
+    f["content"] = text
+    f["numLines"] = text.count("\n") + 1
+    resp["file"] = f
+    return resp
+
+
 def ledger_add(orig, new):
     from densely import ledger
     ledger.add("compress", saved=orig - new, orig=orig, payload=new)
@@ -62,7 +83,8 @@ def main():
     elif tool != "Bash":
         return
 
-    text = extract_text(data.get("tool_response"))
+    resp = data.get("tool_response")
+    text = extract_text(resp)
     if not text or "byte-exact recovery via expand" in text:
         return
 
@@ -99,7 +121,7 @@ def main():
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PostToolUse",
-            "updatedToolOutput": {"type": "text", "content": replacement},
+            "updatedToolOutput": replace_text(resp, replacement),
         }
     }))
 

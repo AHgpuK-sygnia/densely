@@ -158,6 +158,10 @@ outside your shell PATH, so absolute paths only.)
 Tune with `DENSELY_HOOK_MIN_TOKENS` (default 5000). Code files the agent
 is editing are never touched.
 
+Needs Claude Code 2.1.121 or later: older versions let PostToolUse hooks
+rewrite MCP tool output only, so the hook runs but the agent still gets the
+full Bash/Read output.
+
 ## When it saves tokens (and when it doesn't)
 
 Agent sessions resend the whole history to the API on every turn, so
