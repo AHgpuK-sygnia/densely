@@ -102,3 +102,11 @@ def test_small_file_also_writes_sidecar(tmp_path):
     sidecar = str(p) + ".dense"
     assert "PAYLOAD" in result and sidecar in result  # inline AND backup
     assert expand(payload_file=sidecar) == LOG
+
+
+def test_registered_tools():
+    """expand is what every compression result tells the agent to call next."""
+    import asyncio
+    from densely.mcp_server import mcp
+    names = {t.name for t in asyncio.run(mcp.list_tools())}
+    assert names == {"compress_file", "compress_text", "stats", "search", "expand"}

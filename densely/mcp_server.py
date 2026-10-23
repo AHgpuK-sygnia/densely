@@ -140,7 +140,6 @@ def search(pattern: str, payload: str = "", payload_file: str = "") -> str:
     return f"{len(hits)} of {len(rows)} lines match {pattern!r}:\n{body}{more}"
 
 
-@mcp.tool()
 def _stale_banner(status) -> str:
     """Warn, but still hand over the content.
 
@@ -167,6 +166,7 @@ def _ts(epoch: int) -> str:
     return _dt.datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M:%S")
 
 
+@mcp.tool()
 def expand(payload: str = "", payload_file: str = "",
            start_line: int = 0, end_line: int = 0) -> str:
     """Restore the exact original text from a densely payload
