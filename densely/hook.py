@@ -16,7 +16,7 @@ import os
 import sys
 import time
 
-MIN_TOKENS = int(os.environ.get("DENSELY_HOOK_MIN_TOKENS", "5000"))
+MIN_TOKENS = int(os.environ.get("DENSELY_HOOK_MIN_TOKENS", "2000"))
 CODE_EXT = {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".c",
             ".cpp", ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala",
             ".sh", ".zsh", ".sql", ".dense"}

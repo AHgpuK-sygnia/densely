@@ -130,7 +130,7 @@ verbatim:
 
 Zero-effort savings: a PostToolUse hook compresses every large tool
 output (Bash, PowerShell and Grep output, Read of non-code files,
->= 5,000 tokens) on the
+>= 2,000 tokens) on the
 fly — the agent sees a preview + stats, exact content stays available
 via search/expand, and every replacement is recorded in a savings
 ledger (`stats` tool, or the running total shown in each replacement).
@@ -156,7 +156,7 @@ your shell PATH):
 (`which densely-hook` after install gives the absolute path — hooks run
 outside your shell PATH, so absolute paths only.)
 
-Tune with `DENSELY_HOOK_MIN_TOKENS` (default 5000). Code files the agent
+Tune with `DENSELY_HOOK_MIN_TOKENS` (default 2000). Code files the agent
 is editing are never touched.
 
 Claude Code cuts Bash/PowerShell output to `BASH_MAX_OUTPUT_LENGTH`
