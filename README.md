@@ -129,7 +129,8 @@ verbatim:
 ## Automatic mode (hook)
 
 Zero-effort savings: a PostToolUse hook compresses every large tool
-output (Bash output, Read of non-code files, >= 5,000 tokens) on the
+output (Bash, PowerShell and Grep output, Read of non-code files,
+>= 5,000 tokens) on the
 fly — the agent sees a preview + stats, exact content stays available
 via search/expand, and every replacement is recorded in a savings
 ledger (`stats` tool, or the running total shown in each replacement).
@@ -141,7 +142,7 @@ your shell PATH):
 {
   "hooks": {
     "PostToolUse": [{
-      "matcher": "Read|Bash",
+      "matcher": "Read|Bash|PowerShell|Grep",
       "hooks": [{
         "type": "command",
         "command": "/absolute/path/to/densely-hook",
@@ -157,6 +158,13 @@ outside your shell PATH, so absolute paths only.)
 
 Tune with `DENSELY_HOOK_MIN_TOKENS` (default 5000). Code files the agent
 is editing are never touched.
+
+Claude Code cuts Bash/PowerShell output to `BASH_MAX_OUTPUT_LENGTH`
+(default 30,000) chars before the hook sees it. Output that hit this limit
+is passed through untouched: compressing the cut text would give a sidecar
+that only looks complete. Claude Code saves such output to a file instead —
+compress that file with `compress_file`, or redirect large command output
+to a file in the first place.
 
 Needs Claude Code 2.1.121 or later: older versions let PostToolUse hooks
 rewrite MCP tool output only, so the hook runs but the agent still gets the
