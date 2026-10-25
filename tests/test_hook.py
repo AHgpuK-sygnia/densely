@@ -39,6 +39,18 @@ def _read(text, path="/tmp/app.log"):
                 "startLine": 1, "totalLines": n}}}
 
 
+def _powershell(text):
+    return {"tool_name": "PowerShell", "tool_input": {"command": "Get-Content app.log"},
+            "tool_response": {"stdout": text, "stderr": "", "interrupted": False,
+                              "isImage": False, "noOutputExpected": False}}
+
+
+def _grep(text):
+    return {"tool_name": "Grep", "tool_input": {"pattern": "ERROR", "output_mode": "content"},
+            "tool_response": {"mode": "content", "numFiles": 0, "filenames": [],
+                              "content": text, "numLines": text.count("\n") + 1}}
+
+
 def _run(event, monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(hook, "STATE_DIR", str(tmp_path))
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"hook_event_name": "PostToolUse", **event})))
@@ -66,6 +78,28 @@ def test_read_rewrite_keeps_read_output_shape(monkeypatch, capsys, tmp_path):
     assert got["file"]["numLines"] == got["file"]["content"].count("\n") + 1
     for k in ("filePath", "startLine", "totalLines"):
         assert got["file"][k] == want["file"][k]
+
+
+@pytest.mark.parametrize("make, key", [(_powershell, "stdout"), (_grep, "content")])
+def test_output_tools_rewrite_keeps_output_shape(make, key, monkeypatch, capsys, tmp_path):
+    event = make(_log())
+    got = _run(event, monkeypatch, capsys, tmp_path)
+    want = event["tool_response"]
+    assert set(got) == set(want)
+    assert got[key].startswith("[densely] output auto-compressed")
+    assert {k: got[k] for k in want if k != key} == {k: want[k] for k in want if k != key}
+
+
+@pytest.mark.parametrize("make", [_bash, _powershell])
+def test_truncated_shell_output_passes_through(make, monkeypatch, capsys, tmp_path):
+    text = (_log(2000) * 2)[:hook.SHELL_MAX_OUTPUT]
+    assert _run(make(text), monkeypatch, capsys, tmp_path) is None
+
+
+def test_other_tools_pass_through(monkeypatch, capsys, tmp_path):
+    event = {"tool_name": "mcp__codegraph__codegraph_explore", "tool_input": {"query": "x"},
+             "tool_response": _log()}
+    assert _run(event, monkeypatch, capsys, tmp_path) is None
 
 
 @pytest.mark.parametrize("event", [_bash("short output"), _read(_log(), path="/tmp/app.py")])

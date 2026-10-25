@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """PostToolUse hook: auto-compress large tool outputs with densely.
 
-Reads the hook JSON on stdin. If the tool output is large ballast (Bash
-output or Read of a non-code file, >= MIN_TOKENS), replaces it with a
-short preview + a .dense sidecar path, and records savings in the ledger.
-Exits 0 silently (passthrough) in every other case — including any error:
-a hook must never break the agent.
+Reads the hook JSON on stdin. If the tool output is large ballast (Bash,
+PowerShell or Grep output, or Read of a non-code file, >= MIN_TOKENS),
+replaces it with a short preview + a .dense sidecar path, and records
+savings in the ledger. Exits 0 silently (passthrough) in every other case —
+including any error: a hook must never break the agent.
 
 Register (absolute path, see README):
-  PostToolUse matcher "Read|Bash" -> command: $(which densely-hook)
+  PostToolUse matcher "Read|Bash|PowerShell|Grep" -> command: $(which densely-hook)
 """
 
 import json
@@ -20,6 +20,13 @@ MIN_TOKENS = int(os.environ.get("DENSELY_HOOK_MIN_TOKENS", "5000"))
 CODE_EXT = {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".c",
             ".cpp", ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala",
             ".sh", ".zsh", ".sql", ".dense"}
+# Tools whose output has no source file to go stale against
+OUTPUT_TOOLS = {"Bash", "PowerShell", "Grep"}
+# Claude Code cuts shell output to this many chars before the hook sees it
+# (no marker). A sidecar of the cut text would pass for the full output, so
+# such output is left alone: Claude Code persists the full one to a file.
+SHELL_TOOLS = {"Bash", "PowerShell"}
+SHELL_MAX_OUTPUT = int(os.environ.get("BASH_MAX_OUTPUT_LENGTH") or 30000)
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".densely")
 LEDGER = os.path.join(STATE_DIR, "ledger.jsonl")
 
@@ -80,19 +87,21 @@ def main():
         path = (data.get("tool_input") or {}).get("file_path", "")
         if os.path.splitext(path)[1].lower() in CODE_EXT:
             return
-    elif tool != "Bash":
+    elif tool not in OUTPUT_TOOLS:
         return
 
     resp = data.get("tool_response")
     text = extract_text(resp)
     if not text or "byte-exact recovery via expand" in text:
         return
+    if tool in SHELL_TOOLS and len(text) >= SHELL_MAX_OUTPUT:
+        return
 
     from densely import compress, ntok
     orig_tokens = ntok(text)
     if orig_tokens < MIN_TOKENS:
         return
-    # Bash output has no source file to go stale against; a Read does.
+    # Command/search output has no source file to go stale against; a Read does.
     payload = compress(text, alphabet=os.environ.get("DENSELY_ALPHABET", "claude1"),
                        source=path or None)
     payload_tokens = ntok(payload)
