@@ -162,6 +162,13 @@ def _filter(path, monkeypatch, capsysbinary, tmp_path):
     return capsysbinary.readouterr().out.decode()
 
 
+def test_hook_sidecar_honours_state_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("DENSELY_STATE_DIR", str(tmp_path))
+    got = hook.shrink(_log())
+    sidecar = got.split('payload_file="')[1].split('"')[0]
+    assert sidecar.startswith(str(tmp_path / "outputs") + "/")
+
+
 def test_filter_small_output_is_unchanged(monkeypatch, capsysbinary, tmp_path):
     f = tmp_path / "out"
     f.write_bytes(b"short output\nno trailing newline")

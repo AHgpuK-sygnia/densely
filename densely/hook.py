@@ -34,7 +34,6 @@ OUTPUT_TOOLS = {"Bash", "PowerShell", "Grep"}
 SHELL_TOOLS = {"Bash", "PowerShell"}
 SHELL_MAX_OUTPUT = int(os.environ.get("BASH_MAX_OUTPUT_LENGTH") or 30000)
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".densely")
-LEDGER = os.path.join(STATE_DIR, "ledger.jsonl")
 FILTER = os.path.join(os.path.dirname(sys.executable), "densely-filter")
 # The wrapped command runs in the agent's own shell: an exit or exec in it would
 # end that shell before densely-filter prints anything, losing the output.
@@ -100,10 +99,11 @@ def shrink(text, path=""):
     if payload_tokens >= orig_tokens:
         return None
 
-    os.makedirs(os.path.join(STATE_DIR, "outputs"), exist_ok=True)
+    outputs = os.path.join(os.environ.get("DENSELY_STATE_DIR") or STATE_DIR, "outputs")
+    os.makedirs(outputs, exist_ok=True)
     import hashlib
     name = hashlib.sha256(text.encode()).hexdigest()[:16] + ".dense"
-    sidecar = os.path.join(STATE_DIR, "outputs", name)
+    sidecar = os.path.join(outputs, name)
     with open(sidecar, "w", encoding="utf-8") as fh:
         fh.write(payload)
 

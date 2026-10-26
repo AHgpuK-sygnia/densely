@@ -103,6 +103,13 @@ claude mcp add --scope user densely -- "$(which densely-mcp)"
 {"mcpServers": {"densely": {"command": "/absolute/path/to/densely-mcp"}}}
 ```
 
+To share one server process across clients, run `densely-mcp --http [PORT]`
+(127.0.0.1 only, default port 8765) and register it by URL instead:
+`claude mcp add --transport http --scope user densely http://127.0.0.1:8765/mcp`,
+and `{"densely": {"url": "http://127.0.0.1:8765/mcp"}}` in Cursor. Relative
+paths passed to `compress_file` then resolve against the server's working
+directory, so pass absolute paths.
+
 Three tools:
 
 - **compress_file(path)** — agent calls this *instead of reading* a large

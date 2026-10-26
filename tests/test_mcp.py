@@ -104,6 +104,52 @@ def test_small_file_also_writes_sidecar(tmp_path):
     assert expand(payload_file=sidecar) == LOG
 
 
+def test_compress_text_sidecar_honours_state_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("DENSELY_STATE_DIR", str(tmp_path))
+    result = compress_text(LOG)
+    sidecar = str(tmp_path / "densely-payload.dense")
+    assert sidecar in result
+    assert expand(payload_file=sidecar) == LOG
+
+
+def test_stats_counts_compress_ignores_expand(monkeypatch, tmp_path):
+    import json
+    import time
+    from densely.mcp_server import stats
+    monkeypatch.setenv("DENSELY_STATE_DIR", str(tmp_path))
+    now = int(time.time())
+    rows = [{"ts": now, "saved": 100},
+            {"ts": now, "event": "compress", "saved": 50, "orig": 80, "payload": 30},
+            {"ts": now, "event": "expand", "tokens": 80, "sliced": False, "source": None}]
+    (tmp_path / "ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    assert stats() == ("densely savings: 150 tokens today, 150 this week, "
+                       "150 all-time on this machine.")
+
+
+def test_stats_empty_ledger(monkeypatch, tmp_path):
+    from densely.mcp_server import stats
+    monkeypatch.setenv("DENSELY_STATE_DIR", str(tmp_path))
+    assert stats() == "densely has not saved anything yet on this machine."
+
+
+@pytest.mark.parametrize("argv, transport, port", [
+    (["densely-mcp"], "stdio", None),
+    (["densely-mcp", "--http"], "streamable-http", 8765),
+    (["densely-mcp", "--http", "9001"], "streamable-http", 9001),
+])
+def test_main_transport(argv, transport, port, monkeypatch):
+    from densely import mcp_server
+    calls = []
+    monkeypatch.setattr("sys.argv", argv)
+    monkeypatch.setattr(mcp_server.mcp.settings, "port", 8000)
+    monkeypatch.setattr(mcp_server.mcp, "run", lambda transport="stdio": calls.append(transport))
+    mcp_server.main()
+    assert calls == [transport]
+    if port:
+        assert mcp_server.mcp.settings.port == port
+        assert mcp_server.mcp.settings.host == "127.0.0.1"
+
+
 def test_registered_tools():
     """expand is what every compression result tells the agent to call next."""
     import asyncio
