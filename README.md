@@ -170,6 +170,33 @@ Needs Claude Code 2.1.121 or later: older versions let PostToolUse hooks
 rewrite MCP tool output only, so the hook runs but the agent still gets the
 full Bash/Read output.
 
+### Cursor (IDE and CLI)
+
+Cursor hooks cannot replace a built-in tool's output, so the same
+`densely-hook` answers `preToolUse` on `Shell` instead: it rewrites the
+command to run in the agent's shell with its output captured, then
+`densely-filter` prints that output as-is, or as the same preview + `.dense`
+path when it is large. Add to `~/.cursor/hooks.json`:
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [{
+      "matcher": "Shell",
+      "command": "/absolute/path/to/densely-hook",
+      "timeout": 10
+    }]
+  }
+}
+```
+
+and the MCP server (for `search`/`expand`) to `~/.cursor/mcp.json` under
+`mcpServers`. Limits: only Shell output is compressed (not Read or Grep);
+stderr is merged into stdout; output shows up only when the command
+finishes; commands containing `exit` or `exec` are left alone, since they
+would end the shell before the output is printed.
+
 ## When it saves tokens (and when it doesn't)
 
 Agent sessions resend the whole history to the API on every turn, so

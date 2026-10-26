@@ -7,12 +7,18 @@ replaces it with a short preview + a .dense sidecar path, and records
 savings in the ledger. Exits 0 silently (passthrough) in every other case —
 including any error: a hook must never break the agent.
 
+Cursor hooks cannot replace a built-in tool's output, so for Cursor the same
+command answers preToolUse on Shell instead: it rewrites the command to send
+its output through densely-filter, which prints it as-is or compressed.
+
 Register (absolute path, see README):
-  PostToolUse matcher "Read|Bash|PowerShell|Grep" -> command: $(which densely-hook)
+  Claude Code: PostToolUse matcher "Read|Bash|PowerShell|Grep" -> command: $(which densely-hook)
+  Cursor:      preToolUse matcher "Shell" -> command: $(which densely-hook)
 """
 
 import json
 import os
+import re
 import sys
 import time
 
@@ -29,6 +35,10 @@ SHELL_TOOLS = {"Bash", "PowerShell"}
 SHELL_MAX_OUTPUT = int(os.environ.get("BASH_MAX_OUTPUT_LENGTH") or 30000)
 STATE_DIR = os.path.join(os.path.expanduser("~"), ".densely")
 LEDGER = os.path.join(STATE_DIR, "ledger.jsonl")
+FILTER = os.path.join(os.path.dirname(sys.executable), "densely-filter")
+# The wrapped command runs in the agent's own shell: an exit or exec in it would
+# end that shell before densely-filter prints anything, losing the output.
+SKIP_WRAP = re.compile(r"\b(exit|exec)\b")
 
 
 def extract_text(resp):
@@ -77,8 +87,58 @@ def ledger_total():
     return ledger.total_saved()
 
 
+def shrink(text, path=""):
+    """Preview + .dense sidecar path replacing text, or None to keep text as-is."""
+    from densely import compress, ntok
+    orig_tokens = ntok(text)
+    if orig_tokens < MIN_TOKENS:
+        return None
+    # Command/search output has no source file to go stale against; a Read does.
+    payload = compress(text, alphabet=os.environ.get("DENSELY_ALPHABET", "claude1"),
+                       source=path or None)
+    payload_tokens = ntok(payload)
+    if payload_tokens >= orig_tokens:
+        return None
+
+    os.makedirs(os.path.join(STATE_DIR, "outputs"), exist_ok=True)
+    import hashlib
+    name = hashlib.sha256(text.encode()).hexdigest()[:16] + ".dense"
+    sidecar = os.path.join(STATE_DIR, "outputs", name)
+    with open(sidecar, "w", encoding="utf-8") as fh:
+        fh.write(payload)
+
+    rows = text.split("\n")
+    preview = "\n".join(rows[:10])
+    ledger_add(orig_tokens, payload_tokens)
+    return (
+        f"[densely] output auto-compressed: {orig_tokens} -> {payload_tokens} tokens "
+        f"({100 * (1 - payload_tokens / orig_tokens):.0f}% saved; "
+        f"total saved on this machine: {ledger_total()}), {len(rows)} lines.\n"
+        f"First 10 lines:\n{preview}\n\n"
+        f"Exact full content is preserved. Use densely tools with "
+        f"payload_file=\"{sidecar}\": search(pattern) to find/count lines, "
+        f"expand(start_line, end_line) for exact slices."
+    )
+
+
+def cursor_pre_tool_use(data):
+    if data.get("tool_name") != "Shell":
+        return
+    tool_input = data.get("tool_input") or {}
+    cmd = tool_input.get("command") or ""
+    if not cmd.strip() or "densely-filter" in cmd or SKIP_WRAP.search(cmd):
+        return
+    # Newlines around cmd keep a trailing "&" or "# comment" from eating the "}".
+    wrapped = (f'__densely_out=$(mktemp); {{\n{cmd}\n}} >"$__densely_out" 2>&1; '
+               f'__densely_rc=$?; "{FILTER}" "$__densely_out"; rm -f "$__densely_out"; '
+               f'(exit $__densely_rc)')
+    print(json.dumps({"updated_input": {**tool_input, "command": wrapped}}))
+
+
 def main():
     data = json.load(sys.stdin)
+    if data.get("hook_event_name") == "preToolUse":
+        return cursor_pre_tool_use(data)
     if data.get("hook_event_name") != "PostToolUse":
         return
     tool = data.get("tool_name", "")
@@ -97,36 +157,9 @@ def main():
     if tool in SHELL_TOOLS and len(text) >= SHELL_MAX_OUTPUT:
         return
 
-    from densely import compress, ntok
-    orig_tokens = ntok(text)
-    if orig_tokens < MIN_TOKENS:
+    replacement = shrink(text, path)
+    if replacement is None:
         return
-    # Command/search output has no source file to go stale against; a Read does.
-    payload = compress(text, alphabet=os.environ.get("DENSELY_ALPHABET", "claude1"),
-                       source=path or None)
-    payload_tokens = ntok(payload)
-    if payload_tokens >= orig_tokens:
-        return
-
-    os.makedirs(os.path.join(STATE_DIR, "outputs"), exist_ok=True)
-    import hashlib
-    name = hashlib.sha256(text.encode()).hexdigest()[:16] + ".dense"
-    sidecar = os.path.join(STATE_DIR, "outputs", name)
-    with open(sidecar, "w", encoding="utf-8") as fh:
-        fh.write(payload)
-
-    rows = text.split("\n")
-    preview = "\n".join(rows[:10])
-    ledger_add(orig_tokens, payload_tokens)
-    replacement = (
-        f"[densely] output auto-compressed: {orig_tokens} -> {payload_tokens} tokens "
-        f"({100 * (1 - payload_tokens / orig_tokens):.0f}% saved; "
-        f"total saved on this machine: {ledger_total()}), {len(rows)} lines.\n"
-        f"First 10 lines:\n{preview}\n\n"
-        f"Exact full content is preserved. Use densely tools with "
-        f"payload_file=\"{sidecar}\": search(pattern) to find/count lines, "
-        f"expand(start_line, end_line) for exact slices."
-    )
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PostToolUse",
@@ -140,6 +173,20 @@ def entry():
         main()
     except Exception:
         sys.exit(0)  # never break the agent
+
+
+def filter_entry():
+    """densely-filter FILE: print FILE as-is, or compressed when it is large."""
+    with open(sys.argv[1], "rb") as fh:
+        raw = fh.read()
+    try:
+        replacement = shrink(raw.decode("utf-8"))
+    except Exception:
+        replacement = None  # the command's output must always come through
+    if replacement is None:
+        sys.stdout.buffer.write(raw)
+    else:
+        sys.stdout.write(replacement + "\n")
 
 
 if __name__ == "__main__":

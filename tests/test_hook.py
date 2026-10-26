@@ -105,3 +105,90 @@ def test_other_tools_pass_through(monkeypatch, capsys, tmp_path):
 @pytest.mark.parametrize("event", [_bash("short output"), _read(_log(), path="/tmp/app.py")])
 def test_small_output_and_code_pass_through(event, monkeypatch, capsys, tmp_path):
     assert _run(event, monkeypatch, capsys, tmp_path) is None
+
+
+# Cursor: preToolUse rewrites the Shell command; densely-filter compresses its output.
+# tool_input is the shape Cursor CLI 2026.10.22 passes for Shell.
+
+def _cursor_pre(command, tool="Shell", monkeypatch=None, capsys=None):
+    event = {"hook_event_name": "preToolUse", "tool_name": tool,
+             "tool_input": {"command": command, "cwd": "", "timeout": 30000}}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(event)))
+    hook.main()
+    out = capsys.readouterr().out
+    return json.loads(out)["updated_input"] if out else None
+
+
+def test_cursor_shell_command_is_wrapped(monkeypatch, capsys):
+    got = _cursor_pre("cat app.log", monkeypatch=monkeypatch, capsys=capsys)
+    assert got["cwd"] == "" and got["timeout"] == 30000
+    assert "\ncat app.log\n}" in got["command"]
+    assert hook.FILTER in got["command"]
+
+
+@pytest.mark.parametrize("command, tool", [
+    ("cat app.log", "Read"),
+    ("", "Shell"),
+    ('x; "/env/bin/densely-filter" "$f"', "Shell"),
+    ("make test || exit 1", "Shell"),
+    ("exec bash", "Shell"),
+])
+def test_cursor_pre_tool_use_passes_through(command, tool, monkeypatch, capsys):
+    assert _cursor_pre(command, tool, monkeypatch, capsys) is None
+
+
+def test_wrapped_command_keeps_shell_state_output_and_exit_code(monkeypatch, capsys, tmp_path):
+    import os
+    import subprocess
+    import sys
+    filt = tmp_path / "densely-filter"
+    checkout = os.path.dirname(os.path.dirname(os.path.abspath(hook.__file__)))
+    filt.write_text(f"#!{sys.executable}\nimport sys\nsys.path.insert(0, {checkout!r})\n"
+                    "from densely import hook\nhook.filter_entry()\n")
+    filt.chmod(0o755)
+    monkeypatch.setattr(hook, "FILTER", str(filt))
+    cmd = f"cd {tmp_path} && echo out; echo err >&2; false # trailing comment"
+    wrapped = _cursor_pre(cmd, monkeypatch=monkeypatch, capsys=capsys)["command"]
+    run = subprocess.run(["bash", "-c", wrapped + '\necho "rc=$? pwd=$PWD"'],
+                         capture_output=True, text=True,
+                         env={**os.environ, "DENSELY_STATE_DIR": str(tmp_path)})
+    assert run.stdout == f"out\nerr\nrc=1 pwd={tmp_path}\n"
+
+
+def _filter(path, monkeypatch, capsysbinary, tmp_path):
+    monkeypatch.setattr(hook, "STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr("sys.argv", ["densely-filter", str(path)])
+    hook.filter_entry()
+    return capsysbinary.readouterr().out.decode()
+
+
+def test_filter_small_output_is_unchanged(monkeypatch, capsysbinary, tmp_path):
+    f = tmp_path / "out"
+    f.write_bytes(b"short output\nno trailing newline")
+    assert _filter(f, monkeypatch, capsysbinary, tmp_path) == "short output\nno trailing newline"
+
+
+def test_filter_large_output_is_compressed(monkeypatch, capsysbinary, tmp_path):
+    f = tmp_path / "out"
+    f.write_text(_log())
+    got = _filter(f, monkeypatch, capsysbinary, tmp_path)
+    assert got.startswith("[densely] output auto-compressed")
+    sidecar = got.split('payload_file="')[1].split('"')[0]
+    from densely import decompress
+    assert decompress(open(sidecar, encoding="utf-8").read()) == _log()
+
+
+def test_filter_error_falls_back_to_original(monkeypatch, capsysbinary, tmp_path):
+    f = tmp_path / "out"
+    f.write_text(_log())
+    monkeypatch.setattr(hook, "shrink", lambda text: 1 / 0)
+    assert _filter(f, monkeypatch, capsysbinary, tmp_path) == _log()
+
+
+def test_filter_binary_output_is_unchanged(monkeypatch, capsysbinary, tmp_path):
+    f = tmp_path / "out"
+    f.write_bytes(b"\xff\xfe binary \x00")
+    monkeypatch.setattr(hook, "STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setattr("sys.argv", ["densely-filter", str(f)])
+    hook.filter_entry()
+    assert capsysbinary.readouterr().out == b"\xff\xfe binary \x00"
