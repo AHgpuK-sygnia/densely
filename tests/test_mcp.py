@@ -123,7 +123,31 @@ def test_stats_counts_compress_ignores_expand(monkeypatch, tmp_path):
             {"ts": now, "event": "expand", "tokens": 80, "sliced": False, "source": None}]
     (tmp_path / "ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     assert stats() == ("densely savings: 150 tokens today, 150 this week, "
-                       "150 all-time on this machine.")
+                       "150 all-time on this machine. Net after expands: not tracked yet.")
+
+
+def test_stats_reports_net_after_expands(monkeypatch, tmp_path):
+    """Gross savings ignore expands; net subtracts what was pulled back."""
+    import json
+    import time
+    from densely.mcp_server import stats
+    monkeypatch.setenv("DENSELY_STATE_DIR", str(tmp_path))
+    now = int(time.time())
+    rows = [{"ts": now, "event": "compress", "saved": 259, "orig": 4710, "payload": 4451, "shown": 250},
+            {"ts": now, "event": "expand", "tokens": 4710, "returned": 4710, "sliced": False}]
+    (tmp_path / "ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    assert stats().endswith("Net after expands: -250 tokens (since previews were recorded).")
+
+
+def test_sliced_expand_records_returned_size(monkeypatch, tmp_path):
+    """A slice costs only itself; charging the full original overstates the loss."""
+    import json
+    from densely import compress
+    from densely.mcp_server import expand
+    monkeypatch.setenv("DENSELY_STATE_DIR", str(tmp_path))
+    expand(payload=compress(LOG), start_line=1, end_line=5)
+    rec = json.loads((tmp_path / "ledger.jsonl").read_text().splitlines()[-1])
+    assert rec["sliced"] and 0 < rec["returned"] < rec["tokens"]
 
 
 def test_stats_empty_ledger(monkeypatch, tmp_path):

@@ -80,7 +80,10 @@ def summary():
             out["expand"] += 1
             out["expanded_tokens"] += e.get("tokens", 0)
             if counts:
-                out["net_saved"] -= e.get("tokens", 0)
+                # A sliced expand costs only the slice ("returned"); older
+                # entries recorded just the full size.
+                out["net_saved"] -= e.get("returned", e.get("tokens", 0))
+    out["net_tracked"] = since is not None
     out["expand_rate"] = out["expand"] / out["compress"] if out["compress"] else None
     return out
 

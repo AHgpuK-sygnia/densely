@@ -122,8 +122,13 @@ def stats() -> str:
             week += saved
     if not seen:
         return "densely has not saved anything yet on this machine."
+    # The figures above are gross: they ignore expands. Net is what was actually
+    # avoided, and only exists for entries that recorded the preview shown.
+    s = ledger.summary()
+    net = (f"Net after expands: {s['net_saved']} tokens (since previews were recorded)."
+           if s["net_tracked"] else "Net after expands: not tracked yet.")
     return (f"densely savings: {day} tokens today, {week} this week, "
-            f"{total} all-time on this machine.")
+            f"{total} all-time on this machine. {net}")
 
 
 @mcp.tool()
@@ -186,25 +191,27 @@ def expand(payload: str = "", payload_file: str = "",
     if payload_file:
         payload = open(payload_file, encoding="utf-8").read()
     text = _decompress_cached(payload)
-    # Record that the payload alone was not enough. Compressions without expands
-    # are savings; compressions with expands are savings that cost a round trip,
-    # and the ledger cannot tell them apart unless this side is written down too.
-    banner = ""
-    try:
-        from densely import ledger, ntok, source_status
-        status = source_status(payload)
-        ledger.add("expand", tokens=ntok(text), sliced=bool(start_line or end_line),
-                   source=(status or {}).get("state"))
-        banner = _stale_banner(status)
-    except Exception:
-        pass
+    returned = text
     if start_line or end_line:
         rows = text.split("\n")
         lo = max(1, start_line or 1)
         hi = min(len(rows), end_line or len(rows))
-        slice_ = "\n".join(rows[lo - 1:hi])
-        return f"{banner}lines {lo}-{hi} of {len(rows)}:\n{slice_}"
-    return banner + text
+        returned = f"lines {lo}-{hi} of {len(rows)}:\n" + "\n".join(rows[lo - 1:hi])
+    # Record that the payload alone was not enough. Compressions without expands
+    # are savings; compressions with expands are savings that cost a round trip,
+    # and the ledger cannot tell them apart unless this side is written down too.
+    # "tokens" is the full original (it matches the compression's "orig");
+    # "returned" is what this call put in context — a slice costs less.
+    banner = ""
+    try:
+        from densely import ledger, ntok, source_status
+        status = source_status(payload)
+        ledger.add("expand", tokens=ntok(text), returned=ntok(returned),
+                   sliced=bool(start_line or end_line), source=(status or {}).get("state"))
+        banner = _stale_banner(status)
+    except Exception:
+        pass
+    return banner + returned
 
 
 def main():
