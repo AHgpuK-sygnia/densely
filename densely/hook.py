@@ -23,6 +23,12 @@ import sys
 import time
 
 MIN_TOKENS = int(os.environ.get("DENSELY_HOOK_MIN_TOKENS", "2000"))
+# The output is replaced by a 10-line preview, so whenever the agent needs the
+# whole text it pays preview + expand — more than the original. That is only
+# worth risking for a big win: a 5% saving on a diff cost 2x in practice.
+MIN_SAVING = float(os.environ.get("DENSELY_HOOK_MIN_SAVING", "0.4"))
+# Diffs are read in full (reviews, commits), so a preview never carries the task.
+DIFF_CMD = re.compile(r"\b(git\s+diff|gh\s+pr\s+diff)\b")
 CODE_EXT = {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".c",
             ".cpp", ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala",
             ".sh", ".zsh", ".sql", ".dense"}
@@ -76,14 +82,14 @@ def replace_text(resp, text):
     return resp
 
 
-def ledger_add(orig, new):
+def ledger_add(orig, new, shown):
     from densely import ledger
-    ledger.add("compress", saved=orig - new, orig=orig, payload=new)
+    ledger.add("compress", saved=orig - new, orig=orig, payload=new, shown=shown)
 
 
 def ledger_total():
     from densely import ledger
-    return ledger.total_saved()
+    return ledger.summary()["net_saved"]
 
 
 def shrink(text, path=""):
@@ -96,7 +102,7 @@ def shrink(text, path=""):
     payload = compress(text, alphabet=os.environ.get("DENSELY_ALPHABET", "claude1"),
                        source=path or None)
     payload_tokens = ntok(payload)
-    if payload_tokens >= orig_tokens:
+    if payload_tokens > orig_tokens * (1 - MIN_SAVING):
         return None
 
     outputs = os.path.join(os.environ.get("DENSELY_STATE_DIR") or STATE_DIR, "outputs")
@@ -109,16 +115,18 @@ def shrink(text, path=""):
 
     rows = text.split("\n")
     preview = "\n".join(rows[:10])
-    ledger_add(orig_tokens, payload_tokens)
-    return (
+    replacement = (
         f"[densely] output auto-compressed: {orig_tokens} -> {payload_tokens} tokens "
         f"({100 * (1 - payload_tokens / orig_tokens):.0f}% saved; "
-        f"total saved on this machine: {ledger_total()}), {len(rows)} lines.\n"
+        f"net saved on this machine after expands: {ledger_total()}), {len(rows)} lines.\n"
         f"First 10 lines:\n{preview}\n\n"
         f"Exact full content is preserved. Use densely tools with "
         f"payload_file=\"{sidecar}\": search(pattern) to find/count lines, "
-        f"expand(start_line, end_line) for exact slices."
+        f"expand(start_line, end_line) for exact slices. Do NOT Read the .dense "
+        f"file: it is encoded, unreadable, and costs as much as the original."
     )
+    ledger_add(orig_tokens, payload_tokens, ntok(replacement))
+    return replacement
 
 
 def cursor_pre_tool_use(data):
@@ -126,7 +134,8 @@ def cursor_pre_tool_use(data):
         return
     tool_input = data.get("tool_input") or {}
     cmd = tool_input.get("command") or ""
-    if not cmd.strip() or "densely-filter" in cmd or SKIP_WRAP.search(cmd):
+    if (not cmd.strip() or "densely-filter" in cmd or SKIP_WRAP.search(cmd)
+            or DIFF_CMD.search(cmd)):
         return
     # Newlines around cmd keep a trailing "&" or "# comment" from eating the "}".
     wrapped = (f'__densely_out=$(mktemp); {{\n{cmd}\n}} >"$__densely_out" 2>&1; '
@@ -148,6 +157,8 @@ def main():
         if os.path.splitext(path)[1].lower() in CODE_EXT:
             return
     elif tool not in OUTPUT_TOOLS:
+        return
+    elif DIFF_CMD.search((data.get("tool_input") or {}).get("command") or ""):
         return
 
     resp = data.get("tool_response")

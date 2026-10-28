@@ -107,6 +107,21 @@ def test_small_output_and_code_pass_through(event, monkeypatch, capsys, tmp_path
     assert _run(event, monkeypatch, capsys, tmp_path) is None
 
 
+def test_small_saving_passes_through(monkeypatch, capsys, tmp_path):
+    """The preview replaces the output, so a needed expand costs preview + original:
+    a thin saving is a net loss. _log() compresses ~70%, so demand more."""
+    monkeypatch.setattr(hook, "MIN_SAVING", 0.8)
+    assert _run(_bash(_log()), monkeypatch, capsys, tmp_path) is None
+
+
+@pytest.mark.parametrize("cmd", ["gh pr diff 5893", "git diff master...HEAD"])
+def test_diff_output_passes_through(cmd, monkeypatch, capsys, tmp_path):
+    """Diffs are read in full, so a preview never carries the task."""
+    event = _bash(_log())
+    event["tool_input"]["command"] = cmd
+    assert _run(event, monkeypatch, capsys, tmp_path) is None
+
+
 # Cursor: preToolUse rewrites the Shell command; densely-filter compresses its output.
 # tool_input is the shape Cursor CLI 2026.10.22 passes for Shell.
 
