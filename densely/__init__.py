@@ -20,6 +20,10 @@ import sys
 import time
 import urllib.parse
 
+# tiktoken's default cache is under $TMPDIR, which macOS purges; one persistent cache
+# lets every densely process (MCP server, hook, densely-filter) skip the download.
+os.environ.setdefault("TIKTOKEN_CACHE_DIR", os.path.join(os.path.expanduser("~"), ".cache", "densely", "tiktoken"))
+
 import tiktoken
 
 ENC = tiktoken.get_encoding("o200k_base")
